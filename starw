@@ -1,0 +1,219 @@
+import os
+import discord
+import random
+import asyncio
+import json
+from discord.ext import tasks
+
+intents = discord.Intents.default()
+intents.message_content = True
+
+client = discord.Client(intents=intents)
+
+# List of Star Wars characters with rarity levels
+characters = [
+    {"name": "Luke Skywalker", "rarity": "common"},
+    {"name": "Darth Vader", "rarity": "rare"},
+    {"name": "Yoda", "rarity": "legendary"},
+    {"name": "Leia Organa", "rarity": "common"},
+    {"name": "Han Solo", "rarity": "common"},
+    {"name": "Kylo Ren", "rarity": "rare"},
+    {"name": "Darth Sidious", "rarity": "legendary"}
+]
+
+# Global variables to store user data
+user_collections = {}
+user_factions = {}
+user_points = {}
+user_wins = {}
+encountered_character = None
+
+# Function to load collections, factions, and points from a JSON file
+def load_data():
+    global user_collections, user_factions, user_points, user_wins
+    try:
+        with open('data.json', 'r') as f:
+            data = json.load(f)
+            user_collections = data.get('collections', {})
+            user_factions = data.get('factions', {})
+            user_points = data.get('points', {})
+            user_wins = data.get('wins', {})
+    except FileNotFoundError:
+        user_collections = {}
+        user_factions = {}
+        user_points = {}
+        user_wins = {}
+
+# Function to save collections, factions, and points to a JSON file
+def save_data():
+    with open('data.json', 'w') as f:
+        json.dump({
+            'collections': user_collections,
+            'factions': user_factions,
+            'points': user_points,
+            'wins': user_wins
+        }, f)
+
+# List of lightsaber colors
+lightsabers = ["blue", "green", "red", "purple"]
+
+# List of Force powers
+force_powers = ["Force Push", "Force Choke", "Mind Trick", "Force Lightning"]
+
+# List of Star Wars ships
+ships = ["Millennium Falcon", "X-Wing", "TIE Fighter", "Star Destroyer"]
+
+# List of quests and missions
+quests = [
+    "Retrieve the Kyber Crystal from Ilum",
+    "Rescue the captured Rebel soldiers",
+    "Infiltrate the Death Star and disable the tractor beam",
+    "Defeat the Sith Lord in a lightsaber duel"
+]
+
+@client.event
+async def on_ready():
+    print(f'We have logged in as {client.user}')
+    load_data()
+    character_spawn.start()
+
+# Time-based random character encounters
+@tasks.loop(minutes=10)
+async def character_spawn():
+    global encountered_character
+    if random.random() < 0.3:  # 30% chance to spawn a character
+        encountered_character = random.choice(characters)
+        channel = discord.utils.get(client.get_all_channels(), name="general")  # Use your desired channel name
+        await channel.send(f"A wild {encountered_character['name']} appears! Type `!collect` to catch them!")
+
+# Command to collect the encountered character
+@client.event
+async def on_message(message):
+    global encountered_character
+    if message.author == client.user:
+        return
+
+    user_id = str(message.author.id)
+
+    if message.content.startswith('!collect') and encountered_character:
+        if random.choice([True, False]):  # 50% chance to successfully collect the character
+            if user_id not in user_collections:
+                user_collections[user_id] = []
+            user_collections[user_id].append(encountered_character['name'])
+            user_points[user_id] = user_points.get(user_id, 0) + 10  # Earn points for collecting
+            save_data()
+            await message.channel.send(f"Congratulations! You've collected {encountered_character['name']}! You've earned 10 points.")
+            encountered_character = None
+        else:
+            await message.channel.send(f"Oh no! The character escaped!")
+            encountered_character = None
+
+    if message.content.startswith('!duel'):
+        try:
+            opponent = message.mentions[0]
+            if opponent.id == message.author.id:
+                await message.channel.send("You cannot duel yourself!")
+                return
+            winner = random.choice([message.author, opponent])
+            loser = opponent if winner == message.author else message.author
+            saber_color = random.choice(lightsabers)
+            user_wins[str(winner.id)] = user_wins.get(str(winner.id), 0) + 1
+            user_points[str(winner.id)] = user_points.get(str(winner.id), 0) + 20  # Earn points for winning
+            save_data()
+            await message.channel.send(f"{message.author.display_name} challenges {opponent.display_name} to a lightsaber duel!")
+            await message.channel.send(f"The duel is fierce, but in the end, {winner.display_name} wins with a {saber_color} lightsaber!")
+            await message.channel.send(f"{winner.display_name} has earned 20 points!")
+        except IndexError:
+            await message.channel.send("You need to mention an opponent to duel!")
+
+    if message.content.startswith('!forcepower'):
+        power = random.choice(force_powers)
+        await message.channel.send(f"You use {power}! It's super effective!")
+
+    if message.content.startswith('!battle'):
+        try:
+            opponent = message.mentions[0]
+            if opponent.id == message.author.id:
+                await message.channel.send("You cannot battle yourself!")
+                return
+            user_ship = random.choice(ships)
+            opponent_ship = random.choice(ships)
+            winner = random.choice([message.author, opponent])
+            loser = opponent if winner == message.author else message.author
+            user_wins[str(winner.id)] = user_wins.get(str(winner.id), 0) + 1
+            user_points[str(winner.id)] = user_points.get(str(winner.id), 0) + 30  # Earn points for winning
+            save_data()
+            await message.channel.send(f"{message.author.display_name} pilots a {user_ship} and challenges {opponent.display_name} in their {opponent_ship}!")
+            await message.channel.send(f"After an intense battle, {winner.display_name} emerges victorious!")
+            await message.channel.send(f"{winner.display_name} has earned 30 points!")
+        except IndexError:
+            await message.channel.send("You need to mention an opponent to battle!")
+
+    if message.content.startswith('!quest'):
+        quest = random.choice(quests)
+        user_points[user_id] = user_points.get(user_id, 0) + 15  # Earn points for completing quests
+        save_data()
+        await message.channel.send(f"Your mission: {quest}. May the Force be with you! You've earned 15 points.")
+
+    if message.content.startswith('!inventory'):
+        if user_id in user_collections and user_collections[user_id]:
+            collection = ", ".join(user_collections[user_id])
+            await message.channel.send(f"Your collection: {collection}")
+        else:
+            await message.channel.send("You haven't collected any characters yet.")
+
+    if message.content.startswith('!join'):
+        faction = message.content.split(' ')[1].lower()
+        if faction in ['jedi', 'sith', 'rebel', 'empire']:
+            user_factions[user_id] = faction
+            save_data()
+            await message.channel.send(f"{message.author.display_name} has joined the {faction.capitalize()}!")
+        else:
+            await message.channel.send("Invalid faction! Please choose Jedi, Sith, Rebel, or Empire.")
+
+    if message.content.startswith('!points'):
+        points = user_points.get(user_id, 0)
+        await message.channel.send(f"{message.author.display_name}, you have {points} points.")
+
+    if message.content.startswith('!leaderboard'):
+        leaderboard = sorted(user_wins.items(), key=lambda x: x[1], reverse=True)
+        leaderboard_message = "Leaderboard:\n"
+        for user_id, wins in leaderboard[:10]:  # Show top 10
+            user = await client.fetch_user(int(user_id))
+            leaderboard_message += f"{user.display_name}: {wins} wins\n"
+        await message.channel.send(leaderboard_message)
+
+    if message.content.startswith('!trade'):
+        try:
+            recipient = message.mentions[0]
+            if recipient.id == message.author.id:
+                await message.channel.send("You cannot trade with yourself!")
+                return
+            item = message.content.split(' ', 2)[2]
+            if item in user_collections.get(user_id, []):
+                user_collections[user_id].remove(item)
+                if str(recipient.id) not in user_collections:
+                    user_collections[str(recipient.id)] = []
+                user_collections[str(recipient.id)].append(item)
+                save_data()
+                await message.channel.send(f"{message.author.display_name} has traded {item} to {recipient.display_name}!")
+            else:
+                await message.channel.send("You do not have this item in your collection.")
+        except IndexError:
+            await message.channel.send("You need to mention a recipient and specify an item to trade.")
+        except ValueError:
+            await message.channel.send("You need to specify an item to trade.")
+
+    await client.process_commands(message)
+
+try:
+  token = os.getenv("TOKEN") or ""
+  if token == "":
+    raise Exception("Please add your token to the Secrets pane.")
+  client.run(token)
+except discord.HTTPException as e:
+    if e.status == 429:
+        print("The Discord servers denied the connection for making too many requests")
+        print("Get help from https://stackoverflow.com/questions/66724687/in-discord-py-how-to-solve-the-error-for-toomanyrequests")
+    else:
+        raise e
